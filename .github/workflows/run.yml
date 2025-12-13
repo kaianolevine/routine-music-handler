@@ -1,0 +1,41 @@
+name: Run placeholder
+run-name: Run placeholder (${{ github.event_name }})
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: group-placeholder
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Environment configs — can be overridden via GitHub Secrets or workflow dispatch inputs
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+
+    steps:
+      - name: 🧩 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install Poetry
+        run: |
+          pip install poetry
+
+      - name: 🧰 Install dependencies
+        run: |
+          poetry install
+          poetry add git+https://github.com/kaianolevine/kaiano-common-utils.git
+
+      - name: 🏃 Run palcefholder
+        run: |
+          echo "Placeholder"
