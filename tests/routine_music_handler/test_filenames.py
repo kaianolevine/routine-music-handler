@@ -1,5 +1,5 @@
-from audio_submission_processor.filenames import build_base_filename, infer_season_year
-from audio_submission_processor.submission_schema import Submission
+from routine_music_handler.filenames import build_base_filename, infer_season_year
+from routine_music_handler.submission_schema import Submission
 
 
 def test_season_year_november_rolls_forward():
