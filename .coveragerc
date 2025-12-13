@@ -1,6 +1,6 @@
 [run]
 branch = True
-source = project_name
+source = routine_music_handler
 
 [report]
 fail_under = 80

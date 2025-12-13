@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "routine_music_handler"
-version = "0.0.2"
-description = "Starter template for Kaiano's Python projects with CI, pre-commit, coverage, and shared utils."
+version = "0.1.0"
+description = "Starter template for Kaiano's Python projects with CI, pre-commit, coverage, and shared utils. Process Google Form audio submissions: rename, tag with mutagen, upload to Shared Drive, mark sheet processed."
 authors = ["Kaiano Levine <kaiano@example.com>"]
 license = "MIT"
 readme = "README.md"
@@ -10,6 +10,10 @@ packages = [{ include = "routine_music_handler", from = "src" }]
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
 kaiano-common-utils = { git = "https://github.com/kaianolevine/kaiano-common-utils.git", branch = "main" }
+google-api-python-client = "^2.147.0"
+google-auth = "^2.35.0"
+gspread = "^6.1.4"
+mutagen = "^1.47.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
@@ -19,6 +23,11 @@ flake8 = "^7.1.1"
 isort = "^5.13.2"
 mypy = "^1.11.2"
 pre-commit = "^3.8.0"
+ruff = "^0.6.9"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
 
 [build-system]
 requires = ["poetry-core"]
@@ -26,7 +35,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.coverage.run]
 branch = true
-source = ["project_name"]
+source = ["routine_music_handler"]
 
 [tool.coverage.report]
 fail_under = 90
