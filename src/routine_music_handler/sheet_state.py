@@ -5,11 +5,7 @@ from .submission_schema import INPUT_COL_COUNT
 
 def ensure_processed_col_is_last(sheet) -> int:
     """Option A: processed flag is the last column; ensure at least one column after inputs."""
-    min_cols = INPUT_COL_COUNT + 1
-    if sheet.col_count < min_cols:
-        sheet.resize(cols=min_cols)
-    # processed column is the last column (1-based)
-    return sheet.col_count
+    return INPUT_COL_COUNT + 1
 
 
 def iter_unprocessed_rows(sheet, processed_col: int):

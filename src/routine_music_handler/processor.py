@@ -1,7 +1,6 @@
-from __future__ import annotations
-
-import logging
 from typing import Optional
+
+from kaiano_common_utils import logger as log
 
 from .audio_tags import (
     build_tag_artist,
@@ -24,8 +23,6 @@ from .sheet_state import (
 )
 from .submission_schema import INPUT_COL_COUNT, parse_submission_row
 
-log = logging.getLogger(__name__)
-
 
 def process_submission_sheet(
     *,
@@ -41,34 +38,84 @@ def process_submission_sheet(
     """
     processed_col = ensure_processed_col_is_last(sheet)
 
+    log.info(
+        "Starting submission processing: processed_col=%s submissions_folder_id=%s dest_root_folder_id=%s",
+        processed_col,
+        submissions_folder_id,
+        dest_root_folder_id,
+    )
+
     for row_num, row in iter_unprocessed_rows(sheet, processed_col):
+        log.info("Processing row %s", row_num)
         try:
             # Parse positional input
             sub = parse_submission_row(row[:INPUT_COL_COUNT])
 
+            log.debug(
+                "Row %s parsed: timestamp=%s division=%s routine=%s descriptor=%s",
+                row_num,
+                sub.timestamp,
+                sub.division,
+                sub.routine_name,
+                sub.personal_descriptor,
+            )
+
             if not sub.audio_url:
-                log.info("Row %s: missing audio url; skipping", row_num)
+                log.info("Row %s: skipping (missing audio url)", row_num)
                 continue
 
             file_id = extract_drive_file_id(sub.audio_url)
             if not file_id:
-                log.warning("Row %s: could not extract file id; skipping", row_num)
+                log.warning("Row %s: skipping (could not extract file id)", row_num)
                 continue
 
             base_no_ver_no_ext, season_year = build_base_filename(sub)
+
+            log.info(
+                "Row %s filename base: base=%s season_year=%s",
+                row_num,
+                base_no_ver_no_ext,
+                season_year,
+            )
 
             # Destination folder: root / DivisionSubfolder
             root = dest_root_folder_id or submissions_folder_id
             division_folder_name = sanitize_part(sub.division) or "UnknownDivision"
             dest_folder_id = ensure_subfolder(drive, root, division_folder_name)
 
+            log.info(
+                "Row %s destination: root=%s division_folder=%s dest_folder_id=%s",
+                row_num,
+                root,
+                division_folder_name,
+                dest_folder_id,
+            )
+
             # Download original file
             original = download_drive_file(drive, file_id)
             ext = original.name.rsplit(".", 1)[1] if "." in original.name else ""
 
+            log.info(
+                "Row %s downloaded: source_file_id=%s original_name=%s mime_type=%s ext=%s bytes=%s",
+                row_num,
+                file_id,
+                original.name,
+                original.mime_type,
+                ext,
+                len(original.data),
+            )
+
             desired = f"{base_no_ver_no_ext}_v1" + (f".{ext}" if ext else "")
             final_filename, version = resolve_versioned_filename(
                 drive, parent_folder_id=dest_folder_id, desired_filename=desired
+            )
+
+            log.info(
+                "Row %s final filename: desired=%s final=%s version=%s",
+                row_num,
+                desired,
+                final_filename,
+                version,
             )
 
             # Tag bytes (best-effort; returns original bytes on failure/unsupported)
@@ -85,11 +132,25 @@ def process_submission_sheet(
                 personal_descriptor=sub.personal_descriptor,
             )
 
+            log.debug(
+                "Row %s tags: title=%s artist=%s",
+                row_num,
+                new_title,
+                new_artist,
+            )
+
             tagged_bytes = tag_audio_bytes_preserve_previous(
                 filename_for_type=final_filename,
                 audio_bytes=original.data,
                 new_title=new_title,
                 new_artist=new_artist,
+            )
+
+            log.info(
+                "Row %s tagged bytes: before=%s after=%s",
+                row_num,
+                len(original.data),
+                len(tagged_bytes),
             )
 
             # Upload to destination
@@ -101,17 +162,24 @@ def process_submission_sheet(
                 mime_type=original.mime_type,
             )
             log.info(
-                "Row %s: uploaded %s (id=%s)", row_num, final_filename, new_file_id
+                "Row %s uploaded: final_filename=%s new_file_id=%s dest_folder_id=%s",
+                row_num,
+                final_filename,
+                new_file_id,
+                dest_folder_id,
             )
 
             # Delete original only after successful upload
-            delete_drive_file(drive, file_id)
-            log.info("Row %s: deleted original file %s", row_num, file_id)
+            delete_drive_file(
+                drive, file_id, fallback_remove_parent_id=submissions_folder_id
+            )
+            log.info("Row %s deleted original: source_file_id=%s", row_num, file_id)
 
             # Mark processed in the sheet last
             mark_row_processed(sheet, row_num, processed_col)
-            log.info("Row %s: marked processed", row_num)
+            log.info("Row %s marked processed", row_num)
 
-        except Exception as e:
+        except Exception:
             # Do not mark processed. This row will retry next run.
-            log.exception("Row %s: failed to process: %s", row_num, e)
+            log.exception("Row %s failed to process", row_num)
+    log.info("Finished submission processing")
