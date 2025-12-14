@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import io
+import os
 import re
+import tempfile
 from datetime import datetime
 from typing import Any
 
-from mutagen import File as MutagenFile
-from mutagen.flac import FLAC
-from mutagen.id3 import COMM, ID3, TIT2, TPE1
+import music_tag
 
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9_]+")
 
@@ -94,174 +93,66 @@ def tag_audio_bytes_preserve_previous(
     new_title: str,
     new_artist: str,
 ) -> bytes:
-    """Best-effort tag application. If unsupported, return original bytes.
+    """Best-effort tag application using `music-tag`.
 
-    Before writing:
-      - Collect existing Title/Artist/Album/Comment (when available)
-      - Concatenate non-empty values with " | "
-      - Store that concatenation in Comment
-    Then:
-      - Set Title and Artist to the provided values.
-      - Leave Album unchanged.
+    `music-tag` is a thin layer on top of mutagen that provides a consistent
+    tag interface across formats.
+
+    Behavior:
+      - Read existing Title/Artist/Album/Comment (when available)
+      - Concatenate non-empty values with " | " and store it in Comment
+      - Set Title and Artist to the provided values
+      - Leave Album unchanged
+
+    If tagging fails or the format isn't supported, return original bytes.
+
+    Note: music-tag operates on files, so we write to a temp file, edit tags,
+    save, and read bytes back.
     """
+
+    # Preserve original extension for better format detection.
     ext = (
         filename_for_type.rsplit(".", 1)[-1].lower() if "." in filename_for_type else ""
     )
+    suffix = f".{ext}" if ext else ""
 
     try:
-        if ext == "mp3":
-            return _tag_mp3(audio_bytes, new_title, new_artist)
-        if ext == "flac":
-            return _tag_flac(audio_bytes, new_title, new_artist)
-        return _tag_generic(filename_for_type, audio_bytes, new_title, new_artist)
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = os.path.join(td, f"audio{suffix}")
+            with open(tmp_path, "wb") as f:
+                f.write(audio_bytes)
+
+            mf = music_tag.load_file(tmp_path)
+
+            # music-tag keys are flexible, but these are the canonical ones.
+            existing_title = _as_str(getattr(mf.get("title"), "first", ""))
+            existing_artist = _as_str(getattr(mf.get("artist"), "first", ""))
+            existing_album = _as_str(getattr(mf.get("album"), "first", ""))
+            existing_comment = _as_str(getattr(mf.get("comment"), "first", ""))
+
+            prev_concat = " | ".join(
+                [
+                    v
+                    for v in [
+                        existing_title,
+                        existing_artist,
+                        existing_album,
+                        existing_comment,
+                    ]
+                    if v
+                ]
+            )
+
+            # Set new tags
+            mf["title"] = new_title
+            mf["artist"] = new_artist
+            if prev_concat:
+                mf["comment"] = prev_concat
+
+            mf.save()
+
+            with open(tmp_path, "rb") as f:
+                return f.read()
+
     except Exception:
         return audio_bytes
-
-
-def _id3_first_text(id3: ID3, frame_id: str) -> str:
-    frames = id3.getall(frame_id)
-    if not frames:
-        return ""
-    try:
-        txt = frames[0].text
-        if isinstance(txt, list):
-            return _as_str(txt[0]) if txt else ""
-        return _as_str(txt)
-    except Exception:
-        return ""
-
-
-def _id3_first_comment(id3: ID3) -> str:
-    comms = id3.getall("COMM")
-    if not comms:
-        return ""
-    for c in comms:
-        try:
-            if getattr(c, "lang", "") == "eng":
-                return _as_str(c.text[0] if c.text else "")
-        except Exception:
-            continue
-    try:
-        c = comms[0]
-        return _as_str(c.text[0] if c.text else "")
-    except Exception:
-        return ""
-
-
-def _tag_mp3(audio_bytes: bytes, title: str, artist: str) -> bytes:
-    bio = io.BytesIO(audio_bytes)
-    try:
-        id3 = ID3(bio)
-    except Exception:
-        id3 = ID3()
-
-    existing_title = _id3_first_text(id3, "TIT2")
-    existing_artist = _id3_first_text(id3, "TPE1")
-    existing_album = _id3_first_text(id3, "TALB")
-    existing_comment = _id3_first_comment(id3)
-
-    prev_concat = " | ".join(
-        [
-            v
-            for v in [existing_title, existing_artist, existing_album, existing_comment]
-            if v
-        ]
-    )
-
-    id3.delall("TIT2")
-    id3.delall("TPE1")
-    id3.delall("COMM")
-
-    id3.add(TIT2(encoding=3, text=title))
-    id3.add(TPE1(encoding=3, text=artist))
-    if prev_concat:
-        id3.add(COMM(encoding=3, lang="eng", desc="Comment", text=prev_concat))
-
-    bio.seek(0)
-    id3.save(bio, v2_version=3)
-    return bio.getvalue()
-
-
-def _tag_flac(audio_bytes: bytes, title: str, artist: str) -> bytes:
-    bio = io.BytesIO(audio_bytes)
-    flac = FLAC(bio)
-
-    existing_title = _as_str(flac.get("TITLE", [""])[0])
-    existing_artist = _as_str(flac.get("ARTIST", [""])[0])
-    existing_album = _as_str(flac.get("ALBUM", [""])[0])
-    existing_comment = _as_str(flac.get("COMMENT", [""])[0])
-
-    prev_concat = " | ".join(
-        [
-            v
-            for v in [existing_title, existing_artist, existing_album, existing_comment]
-            if v
-        ]
-    )
-
-    flac["TITLE"] = [title]
-    flac["ARTIST"] = [artist]
-    if prev_concat:
-        flac["COMMENT"] = [prev_concat]
-
-    flac.save(bio)
-    return bio.getvalue()
-
-
-def _generic_first(tags: Any, keys: list[str]) -> str:
-    for k in keys:
-        try:
-            v = tags.get(k)
-            if not v:
-                continue
-            if isinstance(v, list):
-                return _as_str(v[0]) if v else ""
-            return _as_str(v)
-        except Exception:
-            continue
-    return ""
-
-
-def _generic_set(tags: Any, keys: list[str], value: str) -> None:
-    for k in keys:
-        try:
-            tags[k] = [value]
-            return
-        except Exception:
-            continue
-
-
-def _tag_generic(filename: str, audio_bytes: bytes, title: str, artist: str) -> bytes:
-    bio = io.BytesIO(audio_bytes)
-    audio = MutagenFile(bio, filename=filename)
-    if audio is None:
-        return audio_bytes
-    if audio.tags is None:
-        try:
-            audio.add_tags()
-        except Exception:
-            return audio_bytes
-
-    tags = audio.tags
-
-    # Try common keys; MP4 uses ©nam, ©ART, ©alb, ©cmt
-    existing_title = _generic_first(tags, ["TITLE", "©nam"])
-    existing_artist = _generic_first(tags, ["ARTIST", "©ART"])
-    existing_album = _generic_first(tags, ["ALBUM", "©alb"])
-    existing_comment = _generic_first(tags, ["COMMENT", "©cmt"])
-
-    prev_concat = " | ".join(
-        [
-            v
-            for v in [existing_title, existing_artist, existing_album, existing_comment]
-            if v
-        ]
-    )
-
-    _generic_set(tags, ["TITLE", "©nam"], title)
-    _generic_set(tags, ["ARTIST", "©ART"], artist)
-    if prev_concat:
-        _generic_set(tags, ["COMMENT", "©cmt"], prev_concat)
-
-    audio.save(bio)
-    return bio.getvalue()
