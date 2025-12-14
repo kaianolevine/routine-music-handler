@@ -377,6 +377,7 @@ def _ensure_division_tab_and_headers(spreadsheet: Any, *, division: str) -> Any:
     except Exception:
         # gspread expects row/col counts for new sheets
         ws = spreadsheet.add_worksheet(title=division, rows=200, cols=len(headers))
+        apply_sheet_formatting(ws)
 
     # Ensure headers in first row
     try:
@@ -387,8 +388,6 @@ def _ensure_division_tab_and_headers(spreadsheet: Any, *, division: str) -> Any:
     if existing[: len(headers)] != headers:
         # Overwrite first row with headers (only first 6 columns)
         ws.update("A1:F1", [headers])
-
-    apply_sheet_formatting(ws)
 
     return ws
 
@@ -403,7 +402,7 @@ def _append_and_sort_submission_log_row(
     descriptor: str,
     version: int,
 ) -> None:
-    """Append a row to the division worksheet and sort by Partnership."""
+    """Append a row to the division worksheet and sort by Version desc, then Partnership asc."""
     # Write timestamp as ISO string for stable sorting/visibility.
     if isinstance(timestamp_value, datetime):
         ts = timestamp_value.isoformat(sep=" ", timespec="seconds")
@@ -416,15 +415,42 @@ def _append_and_sort_submission_log_row(
         (division or "").strip(),
         (routine_name or "").strip(),
         (descriptor or "").strip(),
-        str(version),
+        int(version),
     ]
 
     ws.append_row(row, value_input_option="RAW")
 
-    # Sort by Partnership (col 2), excluding header row (start from row 2).
+    # Sort deterministically by pulling rows, sorting in Python, and writing back.
+    # Keys: Partnership (col 2) asc (grouping), then Version (col 6) numeric desc.
     try:
-        ws.sort((2, "asc"), start_row=2)
+        values = ws.get_all_values()
+        if not values or len(values) <= 2:
+            return
+
+        data_rows = values[1:]
+
+        # Drop fully-empty rows (defensive)
+        data_rows = [r for r in data_rows if any((c or "").strip() for c in r)]
+        if not data_rows:
+            return
+
+        def _version_num(r: list[str]) -> int:
+            try:
+                return int((r[5] or "").strip())  # col 6
+            except Exception:
+                return 0
+
+        def _partnership_key(r: list[str]) -> str:
+            return (r[1] or "").strip().casefold()  # col 2
+
+        data_rows.sort(key=lambda r: (_partnership_key(r), -_version_num(r)))
+
+        end_row = 1 + len(data_rows)
+        ws.batch_clear([f"A2:F{end_row}"])
+        ws.update(f"A2:F{end_row}", data_rows, value_input_option="RAW")
+
     except Exception:
-        # Some older gspread versions / APIs may not support sort() with start_row.
-        # If sort fails, we keep the append; it is not critical.
-        pass
+        log.exception(
+            "Failed to sort _Submitted_Music tab after append: title=%s",
+            getattr(ws, "title", "<unknown>"),
+        )
