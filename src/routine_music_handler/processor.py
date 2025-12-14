@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from kaiano_common_utils import logger as log
-from kaiano_common_utils.sheets_formatting import apply_formatting_to_sheet
+from kaiano_common_utils.sheets_formatting import apply_sheet_formatting
 
 from .drive_ops import (
     delete_drive_file,
@@ -214,8 +214,6 @@ def process_submission_sheet(
                     version=version,
                 )
 
-                apply_formatting_to_sheet(submitted_music_id)
-
                 log.info(
                     "Row %s logged submission: log_sheet_id=%s division_tab=%s partnership=%s",
                     row_num,
@@ -378,7 +376,7 @@ def _ensure_division_tab_and_headers(spreadsheet: Any, *, division: str) -> Any:
         ws = spreadsheet.worksheet(division)
     except Exception:
         # gspread expects row/col counts for new sheets
-        ws = spreadsheet.add_worksheet(title=division, rows=2000, cols=len(headers))
+        ws = spreadsheet.add_worksheet(title=division, rows=200, cols=len(headers))
 
     # Ensure headers in first row
     try:
@@ -389,6 +387,8 @@ def _ensure_division_tab_and_headers(spreadsheet: Any, *, division: str) -> Any:
     if existing[: len(headers)] != headers:
         # Overwrite first row with headers (only first 6 columns)
         ws.update("A1:F1", [headers])
+
+    apply_sheet_formatting(ws)
 
     return ws
 
