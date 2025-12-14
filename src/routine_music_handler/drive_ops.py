@@ -92,6 +92,8 @@ def resolve_versioned_filename(
         )
     base_root = base[: m.start()]
     start_version = int(m.group(1))
+    base_root_lc = base_root.lower()
+    ext_lc = ext.lower()
 
     # Fetch existing files with same prefix in the destination folder
     safe_root = (base_root + "_v").replace("'", "\\'")
@@ -116,11 +118,15 @@ def resolve_versioned_filename(
     used_versions: set[int] = set()
     for f in resp.get("files", []):
         name = f.get("name", "")
-        if ext and not name.endswith(ext):
+        name_lc = name.lower()
+
+        if ext_lc and not name_lc.endswith(ext_lc):
             continue
-        stem = name[: -len(ext)] if ext else name
-        if not stem.startswith(base_root):
+
+        stem = name_lc[: -len(ext_lc)] if ext_lc else name_lc
+        if not stem.startswith(base_root_lc):
             continue
+
         m2 = _VERSION_RE.search(stem)
         if m2:
             used_versions.add(int(m2.group(1)))

@@ -9,8 +9,6 @@ from mutagen import File as MutagenFile
 from mutagen.flac import FLAC
 from mutagen.id3 import COMM, ID3, TIT2, TPE1
 
-from .sheet_state import Submission
-
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9_]+")
 
 
@@ -32,20 +30,19 @@ def _parse_season_year(timestamp: str) -> str:
     return str(year)
 
 
-def build_base_filename(sub: Submission) -> tuple[str, str]:
+def build_base_filename(
+    timestamp, leader, follower, division, routine, descriptor
+) -> tuple[str, str]:
     """Return (base_without_version_or_ext, season_year). Base includes season year and optional fields."""
-    season_year = _parse_season_year(sub.timestamp)
+    season_year = _parse_season_year(timestamp)
 
     prefix = "_".join(
         [
-            sanitize_part(sub.leader_first + sub.leader_last),
-            sanitize_part(sub.follower_first + sub.follower_last),
-            sanitize_part(sub.division),
+            (leader),
+            (follower),
+            (division),
         ]
     )
-
-    routine = sanitize_part(sub.routine_name)
-    descriptor = sanitize_part(sub.personal_descriptor)
 
     tail_parts: list[str] = [season_year]
     if routine:
@@ -72,9 +69,14 @@ def build_tag_title(
 
 
 def build_tag_artist(
-    *, division: str, season_year: str, routine_name: str, personal_descriptor: str
+    *,
+    version: str,
+    division: str,
+    season_year: str,
+    routine_name: str,
+    personal_descriptor: str,
 ) -> str:
-    base = f"{_as_str(division)} {_as_str(season_year)}".strip()
+    base = f"v{_as_str(version)} | {_as_str(division)} {_as_str(season_year)}".strip()
     parts = [base]
     rn = _as_str(routine_name)
     pd = _as_str(personal_descriptor)

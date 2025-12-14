@@ -71,7 +71,15 @@ def process_submission_sheet(
                 log.warning("Row %s: skipping (could not extract file id)", row_num)
                 continue
 
-            base_no_ver_no_ext, season_year = build_base_filename(sub)
+            base_no_ver_no_ext, season_year = build_base_filename(
+                timestamp=sub.timestamp,
+                leader=sanitize_part(sub.leader_first) + sanitize_part(sub.leader_last),
+                follower=sanitize_part(sub.follower_first)
+                + sanitize_part(sub.follower_last),
+                division=sanitize_part(sub.division),
+                routine=sanitize_part(sub.routine_name),
+                descriptor=sanitize_part(sub.personal_descriptor),
+            )
 
             log.info(
                 "Row %s filename base: base=%s season_year=%s",
@@ -122,16 +130,17 @@ def process_submission_sheet(
 
             # Tag bytes (best-effort; returns original bytes on failure/unsupported)
             new_title = build_tag_title(
-                leader_first=sub.leader_first,
-                leader_last=sub.leader_last,
-                follower_first=sub.follower_first,
-                follower_last=sub.follower_last,
+                leader_first=sanitize_part(sub.leader_first),
+                leader_last=sanitize_part(sub.leader_last),
+                follower_first=sanitize_part(sub.follower_first),
+                follower_last=sanitize_part(sub.follower_last),
             )
             new_artist = build_tag_artist(
-                division=sub.division,
+                version=version,
+                division=sanitize_part(sub.division),
                 season_year=season_year,
-                routine_name=sub.routine_name,
-                personal_descriptor=sub.personal_descriptor,
+                routine_name=sanitize_part(sub.routine_name),
+                personal_descriptor=sanitize_part(sub.personal_descriptor),
             )
 
             log.debug(
