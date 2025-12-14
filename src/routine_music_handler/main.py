@@ -4,7 +4,7 @@ import sys
 
 from kaiano_common_utils import _google_credentials
 
-from .processor import process_submission_sheet
+from routine_music_handler.processor import process_submission_sheet
 
 
 def main() -> int:
