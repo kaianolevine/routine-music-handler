@@ -1,6 +1,8 @@
-from typing import Optional
+from datetime import datetime
+from typing import Any, Optional
 
 from kaiano_common_utils import logger as log
+from kaiano_common_utils.sheets_formatting import apply_formatting_to_sheet
 
 from .drive_ops import (
     delete_drive_file,
@@ -30,6 +32,7 @@ def process_submission_sheet(
     *,
     sheet,
     drive,
+    gspreads_client,
     submissions_folder_id: str,
     dest_root_folder_id: Optional[str] = None,
 ) -> None:
@@ -180,6 +183,52 @@ def process_submission_sheet(
                 dest_folder_id,
             )
 
+            # Log submission to _Submitted_Music spreadsheet (in the destination root folder)
+            try:
+                log_root_folder_id = dest_root_folder_id or submissions_folder_id
+                submitted_music_id = _find_or_create_submitted_music_spreadsheet_id(
+                    drive, root_folder_id=log_root_folder_id
+                )
+
+                submitted_ss = gspreads_client.open_by_key(submitted_music_id)
+
+                division_tab = (sub.division or "").strip() or "UnknownDivision"
+                ws = _ensure_division_tab_and_headers(
+                    submitted_ss, division=division_tab
+                )
+
+                partnership = _build_partnership_display(
+                    sub.leader_first,
+                    sub.leader_last,
+                    sub.follower_first,
+                    sub.follower_last,
+                )
+
+                _append_and_sort_submission_log_row(
+                    ws=ws,
+                    timestamp_value=sub.timestamp,
+                    partnership=partnership,
+                    division=division_tab,
+                    routine_name=sub.routine_name,
+                    descriptor=sub.personal_descriptor,
+                    version=version,
+                )
+
+                apply_formatting_to_sheet(submitted_music_id)
+
+                log.info(
+                    "Row %s logged submission: log_sheet_id=%s division_tab=%s partnership=%s",
+                    row_num,
+                    submitted_music_id,
+                    division_tab,
+                    partnership,
+                )
+            except Exception:
+                # Logging to the spreadsheet should not block the main pipeline.
+                log.exception(
+                    "Row %s failed to log submission to _Submitted_Music", row_num
+                )
+
             # Delete original only after successful upload
             delete_drive_file(
                 drive, file_id, fallback_remove_parent_id=submissions_folder_id
@@ -194,3 +243,188 @@ def process_submission_sheet(
             # Do not mark processed. This row will retry next run.
             log.exception("Row %s failed to process", row_num)
     log.info("Finished submission processing")
+
+
+def _get_gspread_client_from_worksheet(sheet: Any) -> Any:
+    """Best-effort extraction of a gspread Client from a gspread Worksheet.
+
+    Different gspread versions expose either a Client or an HTTPClient in different places.
+    We need the Client because `open_by_key` exists on Client, not HTTPClient.
+    """
+
+    # Common case: Worksheet.spreadsheet is a Spreadsheet.
+    ss = getattr(sheet, "spreadsheet", None)
+    if ss is not None:
+        # Some versions expose Client here
+        cand = getattr(ss, "client", None)
+        if cand is not None and hasattr(cand, "open_by_key"):
+            return cand
+
+        # Some versions store Client as _client
+        cand = getattr(ss, "_client", None)
+        if cand is not None and hasattr(cand, "open_by_key"):
+            return cand
+
+        # Some versions expose the Client under ss.client.client (ss.client is HTTPClient)
+        cand2 = getattr(cand, "client", None) if cand is not None else None
+        if cand2 is not None and hasattr(cand2, "open_by_key"):
+            return cand2
+
+    # Alternate attribute name in some objects
+    ss2 = getattr(sheet, "_spreadsheet", None)
+    if ss2 is not None:
+        cand = getattr(ss2, "client", None)
+        if cand is not None and hasattr(cand, "open_by_key"):
+            return cand
+        cand = getattr(ss2, "_client", None)
+        if cand is not None and hasattr(cand, "open_by_key"):
+            return cand
+
+    # As a last resort, the sheet itself might have client
+    cand = getattr(sheet, "client", None)
+    if cand is not None and hasattr(cand, "open_by_key"):
+        return cand
+
+    raise AttributeError(
+        "Unable to locate a gspread Client with open_by_key(). "
+        "Inspect worksheet.spreadsheet and worksheet._spreadsheet attributes."
+    )
+
+
+def _pretty_person_name(first: str, last: str) -> str:
+    """Trim + Title Case words while keeping spaces and Unicode letters."""
+    first = (first or "").strip()
+    last = (last or "").strip()
+
+    def _title_words(s: str) -> str:
+        # Use split() to collapse whitespace, then title-case each token.
+        # `.title()` is Unicode-aware; it will keep accents.
+        return " ".join(tok.title() for tok in s.split())
+
+    first_t = _title_words(first)
+    last_t = _title_words(last)
+    if first_t and last_t:
+        return f"{first_t} {last_t}"
+    return first_t or last_t
+
+
+def _build_partnership_display(
+    leader_first: str,
+    leader_last: str,
+    follower_first: str,
+    follower_last: str,
+) -> str:
+    leader = _pretty_person_name(leader_first, leader_last)
+    follower = _pretty_person_name(follower_first, follower_last)
+    if leader and follower:
+        return f"{leader} & {follower}"
+    return leader or follower
+
+
+def _find_or_create_submitted_music_spreadsheet_id(
+    drive, *, root_folder_id: str
+) -> str:
+    """Find or create the `_Submitted_Music` Google Sheet in the given root folder."""
+    name = "_Submitted_Music"
+    mime = "application/vnd.google-apps.spreadsheet"
+
+    q = (
+        f"name = '{name}' and mimeType = '{mime}' "
+        f"and '{root_folder_id}' in parents and trashed = false"
+    )
+
+    resp = (
+        drive.files()
+        .list(
+            q=q,
+            fields="files(id,name)",
+            pageSize=10,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        )
+        .execute()
+    )
+
+    files = resp.get("files") or []
+    if files:
+        return files[0]["id"]
+
+    # Create it if it doesn't exist.
+    created = (
+        drive.files()
+        .create(
+            body={"name": name, "mimeType": mime, "parents": [root_folder_id]},
+            fields="id",
+            supportsAllDrives=True,
+        )
+        .execute()
+    )
+    return created["id"]
+
+
+def _ensure_division_tab_and_headers(spreadsheet: Any, *, division: str) -> Any:
+    """Ensure a worksheet exists for `division` and has the expected 5-column header row."""
+    headers = [
+        "Timestamp",
+        "Partnership",
+        "Division",
+        "Routine Name",
+        "Descriptor",
+        "Version",
+    ]
+
+    # Find or create worksheet
+    try:
+        ws = spreadsheet.worksheet(division)
+    except Exception:
+        # gspread expects row/col counts for new sheets
+        ws = spreadsheet.add_worksheet(title=division, rows=2000, cols=len(headers))
+
+    # Ensure headers in first row
+    try:
+        existing = ws.row_values(1)
+    except Exception:
+        existing = []
+
+    if existing[: len(headers)] != headers:
+        # Overwrite first row with headers (only first 6 columns)
+        ws.update("A1:F1", [headers])
+
+    return ws
+
+
+def _append_and_sort_submission_log_row(
+    *,
+    ws: Any,
+    timestamp_value: Any,
+    partnership: str,
+    division: str,
+    routine_name: str,
+    descriptor: str,
+    version: int,
+) -> None:
+    """Append a row to the division worksheet and sort by Partnership."""
+    # Write timestamp as ISO string for stable sorting/visibility.
+    if isinstance(timestamp_value, datetime):
+        ts = timestamp_value.isoformat(sep=" ", timespec="seconds")
+    else:
+        ts = str(timestamp_value)
+
+    row = [
+        ts,
+        partnership,
+        (division or "").strip(),
+        (routine_name or "").strip(),
+        (descriptor or "").strip(),
+        str(version),
+    ]
+
+    ws.append_row(row, value_input_option="RAW")
+
+    # Sort by Partnership (col 2), excluding header row (start from row 2).
+    try:
+        ws.sort((2, "asc"), start_row=2)
+    except Exception:
+        # Some older gspread versions / APIs may not support sort() with start_row.
+        # If sort fails, we keep the append; it is not critical.
+        pass

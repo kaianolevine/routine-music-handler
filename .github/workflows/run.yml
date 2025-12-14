@@ -1,11 +1,13 @@
-name: Run placeholder
-run-name: Run placeholder (${{ github.event_name }})
+name: Routine Music Handler
+run-name: Routine Music Handler (${{ github.event_name }})
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    types: [GoogleAppScript_RoutineMusicHandler]
 
 concurrency:
-  group: group-placeholder
+  group: routine-music-handler
   cancel-in-progress: false
 
 jobs:
@@ -15,8 +17,8 @@ jobs:
 
     env:
       # Environment configs — can be overridden via GitHub Secrets or workflow dispatch inputs
-      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
       GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+      LOGGING_LEVEL: ${{ vars.LOGGING_LEVEL }}
 
     steps:
       - name: 🧩 Checkout repository
@@ -36,6 +38,5 @@ jobs:
           poetry install
           poetry add git+https://github.com/kaianolevine/kaiano-common-utils.git
 
-      - name: 🏃 Run palcefholder
-        run: |
-          echo "Placeholder"
+      - name: 🏃 Run Routine Music Handler
+        run: poetry run python src/routine_music_handler/main.py

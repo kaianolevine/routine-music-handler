@@ -25,6 +25,7 @@ def main() -> int:
     process_submission_sheet(
         sheet=sheet,
         drive=drive,
+        gspreads_client=sheets,
         submissions_folder_id=submissions_folder_id,
         dest_root_folder_id=dest_root_folder_id,
     )
