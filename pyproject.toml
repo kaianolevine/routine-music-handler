@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "routine_music_handler"
-version = "0.1.6"
+version = "0.1.7"
 description = "Starter template for Kaiano's Python projects with CI, pre-commit, coverage, and shared utils. Process Google Form audio submissions: rename, tag with mutagen, upload to Shared Drive, mark sheet processed."
 authors = ["Kaiano Levine <kaiano@example.com>"]
 license = "MIT"
