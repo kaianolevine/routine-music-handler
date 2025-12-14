@@ -1,11 +1,59 @@
 from __future__ import annotations
 
 import io
+import re
+from datetime import datetime
 from typing import Any
 
 from mutagen import File as MutagenFile
 from mutagen.flac import FLAC
 from mutagen.id3 import COMM, ID3, TIT2, TPE1
+
+from .sheet_state import Submission
+
+_NON_ALNUM = re.compile(r"[^A-Za-z0-9_]+")
+
+
+def sanitize_part(value: str) -> str:
+    """trim -> lower -> TitleCaseWords -> remove spaces -> sanitize -> collapse underscores"""
+    if not value:
+        return ""
+    v = value.strip().lower()
+    v = "".join(word.capitalize() for word in v.split())
+    v = _NON_ALNUM.sub("_", v)
+    v = re.sub(r"_+", "_", v).strip("_")
+    return v
+
+
+def _parse_season_year(timestamp: str) -> str:
+    """Google Forms timestamp 'M/D/YYYY HH:MM:SS'. If month >= 11, season year is next year."""
+    dt = datetime.strptime(timestamp.strip(), "%m/%d/%Y %H:%M:%S")
+    year = dt.year + (1 if dt.month >= 11 else 0)
+    return str(year)
+
+
+def build_base_filename(sub: Submission) -> tuple[str, str]:
+    """Return (base_without_version_or_ext, season_year). Base includes season year and optional fields."""
+    season_year = _parse_season_year(sub.timestamp)
+
+    prefix = "_".join(
+        [
+            sanitize_part(sub.leader_first + sub.leader_last),
+            sanitize_part(sub.follower_first + sub.follower_last),
+            sanitize_part(sub.division),
+        ]
+    )
+
+    routine = sanitize_part(sub.routine_name)
+    descriptor = sanitize_part(sub.personal_descriptor)
+
+    tail_parts: list[str] = [season_year]
+    if routine:
+        tail_parts.append(routine)
+    if descriptor:
+        tail_parts.append(descriptor)
+
+    return f"{prefix}_{'_'.join(tail_parts)}", season_year
 
 
 def _as_str(v: Any) -> str:
@@ -34,7 +82,7 @@ def build_tag_artist(
         parts.append(rn)
     if pd:
         parts.append(pd)
-    return ", ".join([p for p in parts if p])
+    return " | ".join([p for p in parts if p])
 
 
 def tag_audio_bytes_preserve_previous(

@@ -9,12 +9,12 @@ from .processor import process_submission_sheet
 
 def main() -> int:
 
+    worksheet_name = "Form Responses 1"
+    dest_root_folder_id = "1I7NxCM4RLYhXmQ1BaQjsNvKNWgMClgLH"
     submission_sheet_id = "1V2hupjlrsCtOTU4p_hALCTRKDaB4We84tLnGUCecLLU"
     submissions_folder_id = (
         "1CeUNN08N5SMgZf1RQGHfqPO_ZyrAJzc0M_i2xZCeVuR-TAbnDrncnz9CGJHWY4Af1IecJMi9"
     )
-    dest_root_folder_id = "1I7NxCM4RLYhXmQ1BaQjsNvKNWgMClgLH"
-    worksheet_name = "Form Responses 1"
 
     drive = _google_credentials.get_drive_client()
     sheets = _google_credentials.get_gspread_client()

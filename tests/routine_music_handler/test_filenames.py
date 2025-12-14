@@ -1,13 +1,13 @@
-from routine_music_handler.filenames import build_base_filename, infer_season_year
+from routine_music_handler.filenames import _parse_season_year, build_base_filename
 from routine_music_handler.submission_schema import Submission
 
 
 def test_season_year_november_rolls_forward():
-    assert infer_season_year("11/19/2025 23:16:40") == "2026"
+    assert _parse_season_year("11/19/2025 23:16:40") == "2026"
 
 
 def test_season_year_may_stays_same():
-    assert infer_season_year("5/19/2025 23:16:40") == "2025"
+    assert _parse_season_year("5/19/2025 23:16:40") == "2025"
 
 
 def test_base_filename_includes_year_and_optional_fields():
