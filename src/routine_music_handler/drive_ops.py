@@ -182,62 +182,10 @@ def upload_new_file(
     return created["id"]
 
 
-def describe_drive_file_permissions(drive, file_id: str) -> str:
-    """Return a compact string describing ownership/permissions/capabilities for debugging 403s."""
-    try:
-        meta = (
-            drive.files()
-            .get(
-                fileId=file_id,
-                fields=(
-                    "id,name,mimeType,parents,driveId,"
-                    "owners(displayName,emailAddress),"
-                    "permissions(type,role,emailAddress,domain),"
-                    "capabilities(canDelete,canTrash,canRemoveChildren,canMoveItemWithinDrive)"
-                ),
-                supportsAllDrives=True,
-            )
-            .execute()
-        )
-
-        owners = meta.get("owners") or []
-        owners_str = ",".join(
-            [(o.get("emailAddress") or o.get("displayName") or "?") for o in owners]
-        )
-
-        perms = meta.get("permissions") or []
-        perms_str = ",".join(
-            [
-                f"{p.get('type', '?')}:{p.get('emailAddress') or p.get('domain') or '?'}={p.get('role', '?')}"
-                for p in perms
-            ]
-        )
-
-        caps = meta.get("capabilities") or {}
-        caps_str = ",".join(
-            [
-                f"canDelete={caps.get('canDelete')}",
-                f"canTrash={caps.get('canTrash')}",
-                f"canRemoveChildren={caps.get('canRemoveChildren')}",
-                f"canMoveItemWithinDrive={caps.get('canMoveItemWithinDrive')}",
-            ]
-        )
-
-        return (
-            f"name={meta.get('name')} mimeType={meta.get('mimeType')} "
-            f"driveId={meta.get('driveId')} parents={meta.get('parents')} "
-            f"owners=[{owners_str}] perms=[{perms_str}] caps=[{caps_str}]"
-        )
-    except Exception as e:
-        return f"<failed to fetch metadata: {type(e).__name__}: {e}>"
-
-
 def delete_drive_file(
     drive, file_id: str, *, fallback_remove_parent_id: str | None = None
 ) -> None:
     """Delete a Drive file (with fallbacks for common permission constraints)."""
-    desc = describe_drive_file_permissions(drive, file_id)
-    log.info("Delete attempt: file_id=%s %s", file_id, desc)
 
     # In our typical setup (service account is writer but not owner), delete/trash will always 403.
     # We can detect that up front via capabilities and jump directly to the fallback.
