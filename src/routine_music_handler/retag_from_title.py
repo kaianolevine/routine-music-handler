@@ -9,8 +9,8 @@ from typing import Optional, Tuple
 
 import kaiano_common_utils.google_drive as google_drive
 import kaiano_common_utils.logger as log
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import music_tag
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 AUDIO_EXTS = {".mp3", ".flac", ".m4a", ".mp4", ".ogg", ".opus", ".wav", ".aiff", ".aif"}
 
@@ -214,7 +214,9 @@ def main() -> int:
                 # Always apply: write tags and upload back to Drive
                 write_tags(local_path, new_title, new_artist)
                 written_title, written_artist = _verify_tags_after_write(local_path)
-                log.info(f"🔁 Verified on-disk tags: Title='{written_title}' | Artist='{written_artist}'")
+                log.info(
+                    f"🔁 Verified on-disk tags: Title='{written_title}' | Artist='{written_artist}'"
+                )
                 log.debug("⬆️ Uploading updated file back to Drive")
                 log.debug("(supportsAllDrives=True)")
                 _upload_path_to_drive_file(drive_service, file_id, local_path)
