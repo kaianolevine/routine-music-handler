@@ -10,10 +10,7 @@ from typing import Optional, Tuple
 import kaiano_common_utils.google_drive as google_drive
 import kaiano_common_utils.logger as log
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
-from mutagen import File as MutagenFile
-from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3NoHeaderError
-from mutagen.mp4 import MP4
+import music_tag
 
 AUDIO_EXTS = {".mp3", ".flac", ".m4a", ".mp4", ".ogg", ".opus", ".wav", ".aiff", ".aif"}
 
@@ -88,38 +85,12 @@ def read_source_string(path: Path, source: str) -> str:
         return path.stem
 
     title = ""
-
-    # MP3: EasyID3 is the most consistent
-    if path.suffix.lower() == ".mp3":
-        try:
-            tags = EasyID3(str(path))
-            v = tags.get("title")
-            if v:
-                title = str(v[0])
-        except Exception:
-            title = ""
-
-    if not title:
-        audio = MutagenFile(str(path))
-        if audio is not None and audio.tags is not None:
-            tags = audio.tags
-
-            # MP4/M4A title
-            if isinstance(audio, MP4):
-                v = tags.get("\xa9nam")
-                if v and isinstance(v, list) and v:
-                    title = str(v[0])
-
-            # Vorbis/FLAC/Opus title
-            if not title:
-                for key in ("title", "TITLE"):
-                    if key in tags:
-                        v = tags.get(key)
-                        if isinstance(v, list):
-                            title = str(v[0]) if v else ""
-                        else:
-                            title = str(v)
-                        break
+    try:
+        f = music_tag.load_file(str(path))
+        # music_tag returns an object; str() is a safe way to get a human-readable value.
+        title = str(f["title"]) if f and ("title" in f) else ""
+    except Exception:
+        title = ""
 
     title = (title or "").strip()
     if source == "title":
@@ -129,37 +100,17 @@ def read_source_string(path: Path, source: str) -> str:
 
 
 def write_tags(path: Path, new_title: str, new_artist: str) -> None:
-    ext = path.suffix.lower()
+    try:
+        f = music_tag.load_file(str(path))
+    except Exception as e:
+        raise ValueError(f"Unable to load audio file for tagging: {e}")
 
-    if ext == ".mp3":
-        try:
-            audio = EasyID3(str(path))
-        except ID3NoHeaderError:
-            audio = MutagenFile(str(path), easy=True)
-            if audio is not None:
-                audio.add_tags()
-            audio = EasyID3(str(path))
-        audio["title"] = [new_title]
-        audio["artist"] = [new_artist]
-        audio.save()
-        return
+    # Set tags
+    f["title"] = new_title
+    f["artist"] = new_artist
 
-    audio = MutagenFile(str(path))
-    if audio is None:
-        raise ValueError("Unrecognized/unsupported audio container")
-
-    if isinstance(audio, MP4):
-        audio.tags["\xa9nam"] = [new_title]
-        audio.tags["\xa9ART"] = [new_artist]
-        audio.save()
-        return
-
-    if audio.tags is None:
-        audio.add_tags()
-
-    audio.tags["TITLE"] = new_title
-    audio.tags["ARTIST"] = new_artist
-    audio.save()
+    # Persist
+    f.save()
 
 
 def _verify_tags_after_write(path: Path) -> tuple[str, str]:
@@ -167,44 +118,14 @@ def _verify_tags_after_write(path: Path) -> tuple[str, str]:
     title = ""
     artist = ""
 
-    ext = path.suffix.lower()
+    try:
+        f = music_tag.load_file(str(path))
+        title = str(f["title"]) if f and ("title" in f) else ""
+        artist = str(f["artist"]) if f and ("artist" in f) else ""
+    except Exception:
+        return "", ""
 
-    if ext == ".mp3":
-        try:
-            tags = EasyID3(str(path))
-            t = tags.get("title")
-            a = tags.get("artist")
-            title = str(t[0]) if t else ""
-            artist = str(a[0]) if a else ""
-            return title, artist
-        except Exception:
-            pass
-
-    audio = MutagenFile(str(path))
-    if audio is None or audio.tags is None:
-        return title, artist
-
-    if isinstance(audio, MP4):
-        t = audio.tags.get("\xa9nam")
-        a = audio.tags.get("\xa9ART")
-        title = str(t[0]) if isinstance(t, list) and t else ""
-        artist = str(a[0]) if isinstance(a, list) and a else ""
-        return title, artist
-
-    # Vorbis-style
-    for key in ("TITLE", "title"):
-        v = audio.tags.get(key)
-        if v is not None:
-            title = str(v[0]) if isinstance(v, list) and v else str(v)
-            break
-
-    for key in ("ARTIST", "artist"):
-        v = audio.tags.get(key)
-        if v is not None:
-            artist = str(v[0]) if isinstance(v, list) and v else str(v)
-            break
-
-    return title, artist
+    return (title or "").strip(), (artist or "").strip()
 
 
 def _download_drive_file_to_path(drive_service, file_id: str, dest_path: Path) -> None:
