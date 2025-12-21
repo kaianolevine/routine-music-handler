@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import io
 import re
 import tempfile
@@ -14,9 +13,8 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 AUDIO_EXTS = {".mp3", ".flac", ".m4a", ".mp4", ".ogg", ".opus", ".wav", ".aiff", ".aif"}
 
-DRIVE_FOLDER_ID = "1hDFTDOavXDtJN-MR-ruqqapMaXGp4mB6"
-SOURCE_MODE = "auto"  # title -> filename fallback
-REPORT_FILENAME = "retag_report.csv"
+INPUT_DRIVE_FOLDER_ID = "1hDFTDOavXDtJN-MR-ruqqapMaXGp4mB6"
+OUTPUT_DRIVE_FOLDER_ID = "17LjjgX4bFwxR4NOnnT38Aflp8DSPpjOu"
 
 
 def split_camel(s: str) -> str:
@@ -70,19 +68,13 @@ def parse_compact_string(value: str) -> Optional[Tuple[str, str]]:
     return new_title.strip(), new_artist.strip()
 
 
-def read_source_string(path: Path, source: str) -> str:
+def read_source_string(path: Path) -> str:
     """
     source:
       - title: read from Title tag
       - filename: read from filename stem
       - auto: Title if present else filename
     """
-    source = (source or "auto").strip().lower()
-    if source not in {"title", "filename", "auto"}:
-        raise ValueError(f"Invalid --source: {source}")
-
-    if source == "filename":
-        return path.stem
 
     title = ""
     try:
@@ -93,10 +85,7 @@ def read_source_string(path: Path, source: str) -> str:
         title = ""
 
     title = (title or "").strip()
-    if source == "title":
-        return title
-
-    return title if title else path.stem
+    return title
 
 
 def write_tags(path: Path, new_title: str, new_artist: str) -> None:
@@ -138,21 +127,53 @@ def _download_drive_file_to_path(drive_service, file_id: str, dest_path: Path) -
     fh.close()
 
 
-def _upload_path_to_drive_file(drive_service, file_id: str, src_path: Path) -> None:
+def _upload_path_to_output_folder(
+    drive_service,
+    output_folder_id: str,
+    src_path: Path,
+    dest_name: str,
+) -> str:
+    """Upload the modified file as a NEW Drive file into the output folder.
+
+    Returns the new Drive file id.
+    """
     media = MediaFileUpload(str(src_path), resumable=True)
-    # Preserve metadata; update only content
-    drive_service.files().update(
-        fileId=file_id, media_body=media, supportsAllDrives=True
-    ).execute()
+
+    file_metadata = {
+        "name": dest_name,
+        "parents": [output_folder_id],
+    }
+
+    created = (
+        drive_service.files()
+        .create(
+            body=file_metadata,
+            media_body=media,
+            supportsAllDrives=True,
+            fields="id",
+        )
+        .execute()
+    )
+
+    return (created or {}).get("id") or ""
 
 
 def main() -> int:
-    folder_id = (DRIVE_FOLDER_ID or "").strip()
-    if not folder_id or folder_id == "REPLACE_ME_WITH_FOLDER_ID":
-        raise SystemExit("Set DRIVE_FOLDER_ID in retag_from_title.py before running.")
+    folder_id = (INPUT_DRIVE_FOLDER_ID or "").strip()
+    output_folder_id = (OUTPUT_DRIVE_FOLDER_ID or "").strip()
 
-    log.info(f"🎵 Retag start: folder_id={folder_id}")
-    log.info(f"Mode: SOURCE_MODE={SOURCE_MODE}, report={REPORT_FILENAME}")
+    log.info(
+        "🎵 Retag start: "
+        f"input_folder_id={folder_id} | output_folder_id={output_folder_id}"
+    )
+
+    if not folder_id:
+        log.error("❌ INPUT_DRIVE_FOLDER_ID is empty; cannot continue.")
+        return 1
+
+    if not output_folder_id:
+        log.error("❌ OUTPUT_DRIVE_FOLDER_ID is empty; cannot continue.")
+        return 1
 
     drive_service = google_drive.get_drive_service()
     files = google_drive.list_files_in_folder(drive_service, folder_id)
@@ -177,7 +198,9 @@ def main() -> int:
         file_id = f.get("id")
         name = f.get("name") or "(unknown)"
 
-        log.info(f"➡️ Processing: {name} ({file_id})")
+        log.info(
+            f"➡️ Processing: {name} ({file_id}) → will upload modified copy to output folder"
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             local_path = Path(tmpdir) / name
@@ -187,8 +210,7 @@ def main() -> int:
                 _download_drive_file_to_path(drive_service, file_id, local_path)
                 log.debug("✅ Download complete")
 
-                source_str = read_source_string(local_path, SOURCE_MODE)
-                log.debug(f"🔎 Source string ({SOURCE_MODE}): {source_str}")
+                source_str = read_source_string(local_path)
                 parsed = parse_compact_string(source_str)
 
                 if not parsed:
@@ -217,12 +239,28 @@ def main() -> int:
                 log.info(
                     f"🔁 Verified on-disk tags: Title='{written_title}' | Artist='{written_artist}'"
                 )
-                log.debug("⬆️ Uploading updated file back to Drive")
+                log.debug(
+                    "⬆️ Uploading modified file to OUTPUT folder as a new Drive file"
+                )
                 log.debug("(supportsAllDrives=True)")
-                _upload_path_to_drive_file(drive_service, file_id, local_path)
-                log.debug("✅ Upload complete")
+                new_file_id = _upload_path_to_output_folder(
+                    drive_service,
+                    output_folder_id=output_folder_id,
+                    src_path=local_path,
+                    dest_name=name,
+                )
+                log.debug(f"✅ Upload complete (new_file_id={new_file_id})")
 
-                rows.append([name, file_id, source_str, new_title, new_artist, "OK"])
+                rows.append(
+                    [
+                        name,
+                        file_id,
+                        source_str,
+                        new_title,
+                        new_artist,
+                        f"OK (uploaded copy: {new_file_id})",
+                    ]
+                )
                 changed += 1
 
             except Exception as e:
@@ -230,23 +268,7 @@ def main() -> int:
                 log.error(f"❌ ERROR processing {name} ({file_id}): {e}")
                 rows.append([name, file_id, "", "", "", f"ERROR: {e}"])
 
-    report_path = Path(REPORT_FILENAME).expanduser().resolve()
-    with report_path.open("w", newline="", encoding="utf-8") as fp:
-        w = csv.writer(fp)
-        w.writerow(
-            [
-                "drive_name",
-                "drive_file_id",
-                "source_string",
-                "new_title",
-                "new_artist",
-                "status",
-            ]
-        )
-        w.writerows(rows)
-
     log.info(f"✅ Retag complete: updated {changed} file(s); skipped {skipped}.")
-    log.info(f"Report written: {report_path}")
     return 0
 
 
