@@ -243,52 +243,6 @@ def process_submission_sheet(
     log.info("Finished submission processing")
 
 
-def _get_gspread_client_from_worksheet(sheet: Any) -> Any:
-    """Best-effort extraction of a gspread Client from a gspread Worksheet.
-
-    Different gspread versions expose either a Client or an HTTPClient in different places.
-    We need the Client because `open_by_key` exists on Client, not HTTPClient.
-    """
-
-    # Common case: Worksheet.spreadsheet is a Spreadsheet.
-    ss = getattr(sheet, "spreadsheet", None)
-    if ss is not None:
-        # Some versions expose Client here
-        cand = getattr(ss, "client", None)
-        if cand is not None and hasattr(cand, "open_by_key"):
-            return cand
-
-        # Some versions store Client as _client
-        cand = getattr(ss, "_client", None)
-        if cand is not None and hasattr(cand, "open_by_key"):
-            return cand
-
-        # Some versions expose the Client under ss.client.client (ss.client is HTTPClient)
-        cand2 = getattr(cand, "client", None) if cand is not None else None
-        if cand2 is not None and hasattr(cand2, "open_by_key"):
-            return cand2
-
-    # Alternate attribute name in some objects
-    ss2 = getattr(sheet, "_spreadsheet", None)
-    if ss2 is not None:
-        cand = getattr(ss2, "client", None)
-        if cand is not None and hasattr(cand, "open_by_key"):
-            return cand
-        cand = getattr(ss2, "_client", None)
-        if cand is not None and hasattr(cand, "open_by_key"):
-            return cand
-
-    # As a last resort, the sheet itself might have client
-    cand = getattr(sheet, "client", None)
-    if cand is not None and hasattr(cand, "open_by_key"):
-        return cand
-
-    raise AttributeError(
-        "Unable to locate a gspread Client with open_by_key(). "
-        "Inspect worksheet.spreadsheet and worksheet._spreadsheet attributes."
-    )
-
-
 def _pretty_person_name(first: str, last: str) -> str:
     """Trim + Title Case words while keeping spaces and Unicode letters."""
     first = (first or "").strip()
