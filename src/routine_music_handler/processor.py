@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import Any, Optional
 
-from kaiano_common_utils import logger as log
-from kaiano_common_utils.sheets_formatting import apply_sheet_formatting
+from kaiano import logger as log
+from kaiano.sheets_formatting import apply_sheet_formatting
 
 from .drive_ops import (
     delete_drive_file,

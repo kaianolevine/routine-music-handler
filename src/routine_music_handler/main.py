@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from kaiano_common_utils import _google_credentials
+from kaiano import _google_credentials
 
 from routine_music_handler.processor import process_submission_sheet
 

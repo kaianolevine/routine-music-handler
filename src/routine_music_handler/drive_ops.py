@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
-from kaiano_common_utils import logger as log
+from kaiano import logger as log
 
 _DRIVE_ID_RE = re.compile(r"[-\w]{25,}")
 _VERSION_RE = re.compile(r"_v(\d+)$")

@@ -6,8 +6,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Tuple
 
-import kaiano_common_utils.google_drive as google_drive
-import kaiano_common_utils.logger as log
+import kaiano.google_drive as google_drive
+import kaiano.logger as log
 import music_tag
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
