@@ -9,7 +9,7 @@ packages = [{ include = "routine_music_handler", from = "src" }]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
-kaiano-common-utils = { git = "https://github.com/kaianolevine/kaiano-common-utils.git", branch = "main" }
+kaiano = { git = "https://github.com/kaianolevine/kaiano-common-utils.git", branch = "main" }
 google-api-python-client = "^2.147.0"
 google-auth = "^2.35.0"
 gspread = "^6.1.4"
