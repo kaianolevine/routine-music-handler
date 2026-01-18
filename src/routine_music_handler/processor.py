@@ -1,47 +1,84 @@
+from __future__ import annotations
+
+import os
+import tempfile
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
-from kaiano import logger as log
-from kaiano.sheets_formatting import apply_sheet_formatting
-
-from .drive_ops import (
-    delete_drive_file,
-    download_drive_file,
-    ensure_subfolder,
-    extract_drive_file_id,
-    resolve_versioned_filename,
-    upload_new_file,
-)
-from .file_translations import (
+import music_tag
+from kaiano import logger as logger_mod
+from kaiano.google import GoogleAPI
+from kaiano.helpers import (
+    as_str,
     build_base_filename,
     build_tag_artist,
     build_tag_title,
     sanitize_part,
-    tag_audio_bytes_preserve_previous,
 )
-from .sheet_state import (
-    INPUT_COL_COUNT,
-    ensure_processed_col_is_last,
-    iter_unprocessed_rows,
-    mark_row_processed,
-    parse_submission_row,
-)
+
+log = logger_mod.get_logger()
+
+# -----------------------------------------------------------------------------
+# Sheet row layout
+# -----------------------------------------------------------------------------
+
+INPUT_COL_COUNT = 11  # fixed positional input columns
+
+
+class FormCols:
+    TIMESTAMP = 0
+    EMAIL = 1
+    LEADER_FIRST = 2
+    LEADER_LAST = 3
+    FOLLOWER_FIRST = 4
+    FOLLOWER_LAST = 5
+    DIVISION = 6
+    ROUTINE_NAME = 7
+    PERSONAL_DESCRIPTOR = 8
+    AUDIO_FILE_URL = 9
+    ACKNOWLEDGE = 10
+
+
+@dataclass(frozen=True)
+class Submission:
+    timestamp: str
+    leader_first: str
+    leader_last: str
+    follower_first: str
+    follower_last: str
+    division: str
+    routine_name: str
+    personal_descriptor: str
+    audio_url: str
+
+
+# -----------------------------------------------------------------------------
+# Public entrypoint
+# -----------------------------------------------------------------------------
 
 
 def process_submission_sheet(
     *,
-    sheet,
-    drive,
-    gspreads_client,
+    g: GoogleAPI,
+    submission_sheet_id: str,
+    worksheet_name: Optional[str],
     submissions_folder_id: str,
     dest_root_folder_id: Optional[str] = None,
 ) -> None:
     """Process all unprocessed rows in the submission sheet.
 
-    Option A: processed flag is the last column. We mark 'X' only after:
+    We mark 'X' only after:
       download -> tag -> upload -> delete original all succeed.
+
+    This function opens the gspread worksheet internally (callers pass IDs only).
     """
-    processed_col = ensure_processed_col_is_last(sheet)
+
+    ss = g.gspread.open_by_key(submission_sheet_id)
+    sheet = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
+
+    processed_col = get_processed_col_index()
+    drive = g.drive
 
     log.info(
         "Starting submission processing: processed_col=%s submissions_folder_id=%s dest_root_folder_id=%s",
@@ -53,23 +90,13 @@ def process_submission_sheet(
     for row_num, row in iter_unprocessed_rows(sheet, processed_col):
         log.info("Processing row %s", row_num)
         try:
-            # Parse positional input
             sub = parse_submission_row(row[:INPUT_COL_COUNT])
-
-            log.debug(
-                "Row %s parsed: timestamp=%s division=%s routine=%s descriptor=%s",
-                row_num,
-                sub.timestamp,
-                sub.division,
-                sub.routine_name,
-                sub.personal_descriptor,
-            )
 
             if not sub.audio_url:
                 log.info("Row %s: skipping (missing audio url)", row_num)
                 continue
 
-            file_id = extract_drive_file_id(sub.audio_url)
+            file_id = drive.extract_drive_file_id(sub.audio_url)
             if not file_id:
                 log.warning("Row %s: skipping (could not extract file id)", row_num)
                 continue
@@ -84,54 +111,19 @@ def process_submission_sheet(
                 descriptor=sanitize_part(sub.personal_descriptor),
             )
 
-            log.info(
-                "Row %s filename base: base=%s season_year=%s",
-                row_num,
-                base_no_ver_no_ext,
-                season_year,
-            )
-
-            # Destination folder: root / DivisionSubfolder
             root = dest_root_folder_id or submissions_folder_id
             division_folder_name = sanitize_part(sub.division) or "UnknownDivision"
-            dest_folder_id = ensure_subfolder(drive, root, division_folder_name)
+            dest_folder_id = drive.ensure_folder(root, division_folder_name)
 
-            log.info(
-                "Row %s destination: root=%s division_folder=%s dest_folder_id=%s",
-                row_num,
-                root,
-                division_folder_name,
-                dest_folder_id,
-            )
-
-            # Download original file
-            original = download_drive_file(drive, file_id)
+            original = drive.download_file_bytes(file_id)
             ext = original.name.rsplit(".", 1)[1] if "." in original.name else ""
 
-            log.info(
-                "Row %s downloaded: source_file_id=%s original_name=%s mime_type=%s ext=%s bytes=%s",
-                row_num,
-                file_id,
-                original.name,
-                original.mime_type,
-                ext,
-                len(original.data),
-            )
-
             desired = f"{base_no_ver_no_ext}_v1" + (f".{ext}" if ext else "")
-            final_filename, version = resolve_versioned_filename(
-                drive, parent_folder_id=dest_folder_id, desired_filename=desired
+            final_filename, version = drive.resolve_versioned_filename(
+                parent_folder_id=dest_folder_id,
+                desired_filename=desired,
             )
 
-            log.info(
-                "Row %s final filename: desired=%s final=%s version=%s",
-                row_num,
-                desired,
-                final_filename,
-                version,
-            )
-
-            # Tag bytes (best-effort; returns original bytes on failure/unsupported)
             new_title = build_tag_title(
                 leader_first=sanitize_part(sub.leader_first),
                 leader_last=sanitize_part(sub.leader_last),
@@ -146,13 +138,6 @@ def process_submission_sheet(
                 personal_descriptor=sanitize_part(sub.personal_descriptor),
             )
 
-            log.debug(
-                "Row %s tags: title=%s artist=%s",
-                row_num,
-                new_title,
-                new_artist,
-            )
-
             tagged_bytes = tag_audio_bytes_preserve_previous(
                 filename_for_type=final_filename,
                 audio_bytes=original.data,
@@ -160,41 +145,27 @@ def process_submission_sheet(
                 new_artist=new_artist,
             )
 
-            log.info(
-                "Row %s tagged bytes: before=%s after=%s",
-                row_num,
-                len(original.data),
-                len(tagged_bytes),
-            )
-
-            # Upload to destination
-            new_file_id = upload_new_file(
-                drive,
-                parent_folder_id=dest_folder_id,
+            new_file_id = drive.upload_bytes(
+                parent_id=dest_folder_id,
                 filename=final_filename,
                 content=tagged_bytes,
                 mime_type=original.mime_type,
             )
-            log.info(
-                "Row %s uploaded: final_filename=%s new_file_id=%s dest_folder_id=%s",
-                row_num,
-                final_filename,
-                new_file_id,
-                dest_folder_id,
-            )
+            log.info("Row %s uploaded: new_file_id=%s", row_num, new_file_id)
 
-            # Log submission to _Submitted_Music spreadsheet (in the destination root folder)
+            # Log submission to _Submitted_Music
             try:
                 log_root_folder_id = dest_root_folder_id or submissions_folder_id
-                submitted_music_id = _find_or_create_submitted_music_spreadsheet_id(
-                    drive, root_folder_id=log_root_folder_id
+                submitted_music_id = drive.find_or_create_spreadsheet(
+                    parent_folder_id=log_root_folder_id,
+                    name="_Submitted_Music",
                 )
-
-                submitted_ss = gspreads_client.open_by_key(submitted_music_id)
 
                 division_tab = (sub.division or "").strip() or "UnknownDivision"
                 ws = _ensure_division_tab_and_headers(
-                    submitted_ss, division=division_tab
+                    g=g,
+                    submitted_music_id=submitted_music_id,
+                    division=division_tab,
                 )
 
                 partnership = _build_partnership_display(
@@ -213,51 +184,94 @@ def process_submission_sheet(
                     descriptor=sub.personal_descriptor,
                     version=version,
                 )
-
-                log.info(
-                    "Row %s logged submission: log_sheet_id=%s division_tab=%s partnership=%s",
-                    row_num,
-                    submitted_music_id,
-                    division_tab,
-                    partnership,
-                )
             except Exception:
-                # Logging to the spreadsheet should not block the main pipeline.
                 log.exception(
                     "Row %s failed to log submission to _Submitted_Music", row_num
                 )
 
             # Delete original only after successful upload
-            delete_drive_file(
-                drive, file_id, fallback_remove_parent_id=submissions_folder_id
+            drive.delete_file_with_fallback(
+                file_id,
+                fallback_remove_parent_id=submissions_folder_id,
             )
-            log.info("Row %s deleted original: source_file_id=%s", row_num, file_id)
 
-            # Mark processed in the sheet last
+            # Mark processed last
             mark_row_processed(sheet, row_num, processed_col)
-            log.info("Row %s marked processed", row_num)
 
         except Exception:
-            # Do not mark processed. This row will retry next run.
             log.exception("Row %s failed to process", row_num)
+
     log.info("Finished submission processing")
 
 
+# -----------------------------------------------------------------------------
+# Sheet helpers (gspread adapter layer)
+# -----------------------------------------------------------------------------
+
+
+def get_processed_col_index() -> int:
+    return INPUT_COL_COUNT + 1
+
+
+def iter_unprocessed_rows(sheet: Any, processed_col: int):
+    values = sheet.get_all_values()
+    if len(values) <= 1:
+        return
+    for idx, row in enumerate(values[1:], start=2):
+        while len(row) < processed_col:
+            row.append("")
+        if (row[processed_col - 1] or "").strip().upper() == "X":
+            continue
+        yield idx, row
+
+
+def mark_row_processed(sheet: Any, row_num: int, processed_col: int) -> None:
+    sheet.update_cell(row_num, processed_col, "X")
+
+
+# -----------------------------------------------------------------------------
+# Parsing and normalization
+# -----------------------------------------------------------------------------
+
+
+def normalize_cell(v: Any) -> str:
+    return "" if v is None else str(v).strip()
+
+
+def normalize_row(row: Sequence[Any]) -> list[str]:
+    return [normalize_cell(v) for v in row]
+
+
+def parse_submission_row(row: Sequence[Any]) -> Submission:
+    if len(row) < INPUT_COL_COUNT:
+        raise ValueError(
+            f"Row too short: expected >= {INPUT_COL_COUNT}, got {len(row)}"
+        )
+
+    r = normalize_row(row)
+
+    return Submission(
+        timestamp=r[FormCols.TIMESTAMP],
+        leader_first=r[FormCols.LEADER_FIRST],
+        leader_last=r[FormCols.LEADER_LAST],
+        follower_first=r[FormCols.FOLLOWER_FIRST],
+        follower_last=r[FormCols.FOLLOWER_LAST],
+        division=r[FormCols.DIVISION],
+        routine_name=r[FormCols.ROUTINE_NAME],
+        personal_descriptor=r[FormCols.PERSONAL_DESCRIPTOR],
+        audio_url=r[FormCols.AUDIO_FILE_URL],
+    )
+
+
+# -----------------------------------------------------------------------------
+# _Submitted_Music helpers
+# -----------------------------------------------------------------------------
+
+
 def _pretty_person_name(first: str, last: str) -> str:
-    """Trim + Title Case words while keeping spaces and Unicode letters."""
     first = (first or "").strip()
     last = (last or "").strip()
-
-    def _title_words(s: str) -> str:
-        # Use split() to collapse whitespace, then title-case each token.
-        # `.title()` is Unicode-aware; it will keep accents.
-        return " ".join(tok.title() for tok in s.split())
-
-    first_t = _title_words(first)
-    last_t = _title_words(last)
-    if first_t and last_t:
-        return f"{first_t} {last_t}"
-    return first_t or last_t
+    return " ".join(tok.title() for tok in f"{first} {last}".split()).strip()
 
 
 def _build_partnership_display(
@@ -273,49 +287,12 @@ def _build_partnership_display(
     return leader or follower
 
 
-def _find_or_create_submitted_music_spreadsheet_id(
-    drive, *, root_folder_id: str
-) -> str:
-    """Find or create the `_Submitted_Music` Google Sheet in the given root folder."""
-    name = "_Submitted_Music"
-    mime = "application/vnd.google-apps.spreadsheet"
-
-    q = (
-        f"name = '{name}' and mimeType = '{mime}' "
-        f"and '{root_folder_id}' in parents and trashed = false"
-    )
-
-    resp = (
-        drive.files()
-        .list(
-            q=q,
-            fields="files(id,name)",
-            pageSize=10,
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True,
-        )
-        .execute()
-    )
-
-    files = resp.get("files") or []
-    if files:
-        return files[0]["id"]
-
-    # Create it if it doesn't exist.
-    created = (
-        drive.files()
-        .create(
-            body={"name": name, "mimeType": mime, "parents": [root_folder_id]},
-            fields="id",
-            supportsAllDrives=True,
-        )
-        .execute()
-    )
-    return created["id"]
-
-
-def _ensure_division_tab_and_headers(spreadsheet: Any, *, division: str) -> Any:
-    """Ensure a worksheet exists for `division` and has the expected 5-column header row."""
+def _ensure_division_tab_and_headers(
+    *,
+    g: GoogleAPI,
+    submitted_music_id: str,
+    division: str,
+) -> Any:
     headers = [
         "Timestamp",
         "Partnership",
@@ -324,23 +301,20 @@ def _ensure_division_tab_and_headers(spreadsheet: Any, *, division: str) -> Any:
         "Descriptor",
         "Version",
     ]
+    ss = g.gspread.open_by_key(submitted_music_id)
 
-    # Find or create worksheet
     try:
-        ws = spreadsheet.worksheet(division)
+        ws = ss.worksheet(division)
     except Exception:
-        # gspread expects row/col counts for new sheets
-        ws = spreadsheet.add_worksheet(title=division, rows=200, cols=len(headers))
-        apply_sheet_formatting(ws)
+        ws = ss.add_worksheet(title=division, rows=200, cols=len(headers))
+        g.sheets.formatter.apply_sheet_formatting(ws)
 
-    # Ensure headers in first row
     try:
         existing = ws.row_values(1)
     except Exception:
         existing = []
 
     if existing[: len(headers)] != headers:
-        # Overwrite first row with headers (only first 6 columns)
         ws.update("A1:F1", [headers])
 
     return ws
@@ -356,8 +330,6 @@ def _append_and_sort_submission_log_row(
     descriptor: str,
     version: int,
 ) -> None:
-    """Append a row to the division worksheet and sort by Version desc, then Partnership asc."""
-    # Write timestamp as ISO string for stable sorting/visibility.
     if isinstance(timestamp_value, datetime):
         ts = timestamp_value.isoformat(sep=" ", timespec="seconds")
     else:
@@ -366,39 +338,33 @@ def _append_and_sort_submission_log_row(
     row = [
         ts,
         partnership,
-        (division or "").strip(),
-        (routine_name or "").strip(),
-        (descriptor or "").strip(),
+        division.strip(),
+        routine_name.strip(),
+        descriptor.strip(),
         int(version),
     ]
-
     ws.append_row(row, value_input_option="RAW")
 
-    # Sort deterministically by pulling rows, sorting in Python, and writing back.
-    # Keys: Partnership (col 2) asc (grouping), then Version (col 6) numeric desc.
     try:
         values = ws.get_all_values()
         if not values or len(values) <= 2:
             return
 
         data_rows = values[1:]
-
-        # Drop fully-empty rows (defensive)
         data_rows = [r for r in data_rows if any((c or "").strip() for c in r)]
         if not data_rows:
             return
 
         def _version_num(r: list[str]) -> int:
             try:
-                return int((r[5] or "").strip())  # col 6
+                return int((r[5] or "").strip())
             except Exception:
                 return 0
 
         def _partnership_key(r: list[str]) -> str:
-            return (r[1] or "").strip().casefold()  # col 2
+            return (r[1] or "").strip().casefold()
 
         data_rows.sort(key=lambda r: (_partnership_key(r), -_version_num(r)))
-
         end_row = 1 + len(data_rows)
         ws.batch_clear([f"A2:F{end_row}"])
         ws.update(f"A2:F{end_row}", data_rows, value_input_option="RAW")
@@ -408,3 +374,64 @@ def _append_and_sort_submission_log_row(
             "Failed to sort _Submitted_Music tab after append: title=%s",
             getattr(ws, "title", "<unknown>"),
         )
+
+
+# -----------------------------------------------------------------------------
+# Tagging helpers
+# -----------------------------------------------------------------------------
+
+
+def tag_audio_bytes_preserve_previous(
+    *,
+    filename_for_type: str,
+    audio_bytes: bytes,
+    new_title: str,
+    new_artist: str,
+) -> bytes:
+    ext = (
+        filename_for_type.rsplit(".", 1)[-1].lower() if "." in filename_for_type else ""
+    )
+    suffix = f".{ext}" if ext else ""
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = os.path.join(td, f"audio{suffix}")
+            with open(tmp_path, "wb") as f:
+                f.write(audio_bytes)
+
+            mf = music_tag.load_file(tmp_path)
+
+            existing_title = as_str(getattr(mf.get("title"), "first", ""))
+            existing_artist = as_str(getattr(mf.get("artist"), "first", ""))
+            existing_album = as_str(getattr(mf.get("album"), "first", ""))
+            existing_comment = as_str(getattr(mf.get("comment"), "first", ""))
+
+            prev_concat = " | ".join(
+                [
+                    v
+                    for v in [
+                        existing_title,
+                        existing_artist,
+                        existing_album,
+                        existing_comment,
+                    ]
+                    if v
+                ]
+            )
+
+            mf["title"] = new_title
+            mf["artist"] = new_artist
+            if prev_concat:
+                mf["comment"] = prev_concat
+
+            mf.save()
+
+            with open(tmp_path, "rb") as f:
+                return f.read()
+
+    except Exception as e:
+        log.debug(
+            "tag_audio_bytes_preserve_previous: tagging failed; returning original bytes: %s",
+            e,
+        )
+        return audio_bytes

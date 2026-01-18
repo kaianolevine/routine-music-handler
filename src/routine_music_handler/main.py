@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from kaiano import _google_credentials
+from kaiano.google import GoogleAPI
 
 from routine_music_handler.processor import process_submission_sheet
 
@@ -16,16 +16,12 @@ def main() -> int:
         "1CeUNN08N5SMgZf1RQGHfqPO_ZyrAJzc0M_i2xZCeVuR-TAbnDrncnz9CGJHWY4Af1IecJMi9"
     )
 
-    drive = _google_credentials.get_drive_client()
-    sheets = _google_credentials.get_gspread_client()
-
-    ss = sheets.open_by_key(submission_sheet_id)
-    sheet = ss.worksheet(worksheet_name) if worksheet_name else ss.sheet1
+    g = GoogleAPI.from_env()
 
     process_submission_sheet(
-        sheet=sheet,
-        drive=drive,
-        gspreads_client=sheets,
+        g=g,
+        submission_sheet_id=submission_sheet_id,
+        worksheet_name=worksheet_name,
         submissions_folder_id=submissions_folder_id,
         dest_root_folder_id=dest_root_folder_id,
     )
