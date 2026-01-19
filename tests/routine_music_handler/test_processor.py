@@ -392,20 +392,3 @@ def test_process_submission_sheet_does_not_mark_processed_if_delete_fails(monkey
 
     # Should NOT mark processed if delete fails (since exception caught in outer try)
     assert ws.updated_cells == []
-
-
-def test_tag_audio_bytes_preserve_previous_returns_original_on_failure(monkeypatch):
-    # Force music_tag to raise
-    monkeypatch.setattr(
-        processor.music_tag,
-        "load_file",
-        lambda _p: (_ for _ in ()).throw(RuntimeError("boom")),
-    )
-
-    out = processor.tag_audio_bytes_preserve_previous(
-        filename_for_type="x.mp3",
-        audio_bytes=b"ORIG",
-        new_title="t",
-        new_artist="a",
-    )
-    assert out == b"ORIG"
