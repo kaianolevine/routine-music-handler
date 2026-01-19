@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional, Sequence
 
-import music_tag
 from kaiano import logger as logger_mod
 from kaiano.google import GoogleAPI
 from kaiano.helpers import (
@@ -16,6 +15,7 @@ from kaiano.helpers import (
     build_tag_title,
     sanitize_part,
 )
+from kaiano.identify_audio.mp3.tag import Mp3Tagger
 
 log = logger_mod.get_logger()
 
@@ -393,18 +393,20 @@ def tag_audio_bytes_preserve_previous(
     )
     suffix = f".{ext}" if ext else ""
 
+    tagger = Mp3Tagger()
+
     try:
         with tempfile.TemporaryDirectory() as td:
             tmp_path = os.path.join(td, f"audio{suffix}")
             with open(tmp_path, "wb") as f:
                 f.write(audio_bytes)
 
-            mf = music_tag.load_file(tmp_path)
-
-            existing_title = as_str(getattr(mf.get("title"), "first", ""))
-            existing_artist = as_str(getattr(mf.get("artist"), "first", ""))
-            existing_album = as_str(getattr(mf.get("album"), "first", ""))
-            existing_comment = as_str(getattr(mf.get("comment"), "first", ""))
+            # Read existing tags (best-effort)
+            existing = tagger.read(tmp_path).tags
+            existing_title = as_str(existing.get("tracktitle", ""))
+            existing_artist = as_str(existing.get("artist", ""))
+            existing_album = as_str(existing.get("album", ""))
+            existing_comment = as_str(existing.get("comment", ""))
 
             prev_concat = " | ".join(
                 [
@@ -419,12 +421,15 @@ def tag_audio_bytes_preserve_previous(
                 ]
             )
 
-            mf["title"] = new_title
-            mf["artist"] = new_artist
+            metadata: dict[str, Any] = {
+                "title": new_title,
+                "artist": new_artist,
+            }
             if prev_concat:
-                mf["comment"] = prev_concat
+                metadata["comment"] = prev_concat
 
-            mf.save()
+            # Write updated tags back to the temp file
+            tagger.write(tmp_path, metadata, ensure_virtualdj_compat=True)
 
             with open(tmp_path, "rb") as f:
                 return f.read()
