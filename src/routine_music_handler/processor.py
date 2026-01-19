@@ -15,7 +15,7 @@ from kaiano.helpers import (
     build_tag_title,
     sanitize_part,
 )
-from kaiano.identify_audio.mp3.tag import Mp3Tagger
+from kaiano.mp3.tag import Mp3Tagger
 
 log = logger_mod.get_logger()
 
