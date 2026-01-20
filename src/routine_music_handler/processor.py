@@ -413,18 +413,12 @@ def tag_audio_bytes_preserve_previous(
             existing_album = Mp3Tagger.sanitize_string(existing.get("album", ""))
             existing_comment = Mp3Tagger.sanitize_string(existing.get("comment", ""))
 
-            prev_concat = " | ".join(
-                [
-                    v
-                    for v in [
-                        existing_title,
-                        existing_artist,
-                        existing_album,
-                        existing_comment,
-                    ]
-                    if v
-                ]
-            )
+            # Preserve previous tags in a stable, parseable format.
+            # Intent (confirmed): store as prev[title,artist,album,comment].
+            if any([existing_title, existing_artist, existing_album, existing_comment]):
+                prev_concat = f"prev[{existing_title},{existing_artist},{existing_album},{existing_comment}]"
+            else:
+                prev_concat = ""
 
             metadata: dict[str, Any] = {
                 "title": new_title,
