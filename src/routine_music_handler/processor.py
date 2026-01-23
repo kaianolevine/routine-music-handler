@@ -31,10 +31,12 @@ from typing import Any, Optional, Sequence
 
 from kaiano import logger as logger_mod
 from kaiano.google import GoogleAPI
+from kaiano.json import create_collection_snapshot, write_json_snapshot
 from kaiano.mp3.rename import Mp3Renamer
 from kaiano.mp3.tag import Mp3Tagger
 
 log = logger_mod.get_logger()
+
 
 # -----------------------------------------------------------------------------
 # Sheet row layout
@@ -72,6 +74,76 @@ class Submission:
     audio_url: str
 
 
+def write_submitted_music_snapshot(
+    *,
+    g: GoogleAPI,
+    submitted_music_id: str,
+) -> None:
+    """
+    Write a static JSON snapshot of the per-division submission log spreadsheet (_Submitted_Music),
+    reading ALL worksheets/tabs in the spreadsheet.
+
+    Output path can be configured via ROUTINE_MUSIC_JSON_OUTPUT_PATH; defaults to
+    v1/routine-music/submitted_music.json (repo-relative).
+    """
+    json_output_path = (
+        os.getenv("ROUTINE_MUSIC_JSON_OUTPUT_PATH")
+        or "v1/routine-music/submitted_music.json"
+    )
+
+    ss = g.gspread.open_by_key(submitted_music_id)
+
+    snapshot = create_collection_snapshot("divisions")
+    divisions: list[dict[str, Any]] = []
+
+    for ws in ss.worksheets():
+        division_name = (getattr(ws, "title", "") or "").strip() or "UnknownDivision"
+        try:
+            values = ws.get_all_values() or []
+        except Exception:
+            log.exception("Failed to read worksheet for snapshot: %s", division_name)
+            continue
+
+        if not values or len(values) < 2:
+            # header-only or empty
+            continue
+
+        headers = values[0]
+        rows = values[1:]
+        rows = [r for r in rows if any((c or "").strip() for c in r)]
+        if not rows:
+            continue
+
+        # Normalize row widths to header width for consistent output.
+        width = len(headers)
+        norm_rows: list[list[str]] = []
+        for r in rows:
+            rr = list(r)
+            if len(rr) < width:
+                rr.extend([""] * (width - len(rr)))
+            elif len(rr) > width:
+                rr = rr[:width]
+            norm_rows.append(rr)
+
+        divisions.append(
+            {
+                "division": division_name,
+                "headers": headers,
+                "rows": norm_rows,
+            }
+        )
+
+    snapshot["divisions"] = divisions
+
+    try:
+        write_json_snapshot(snapshot, json_output_path)
+        log.info("🧾 Wrote _Submitted_Music JSON snapshot to: %s", json_output_path)
+    except Exception:
+        log.exception(
+            "Failed to write _Submitted_Music JSON snapshot to: %s", json_output_path
+        )
+
+
 # -----------------------------------------------------------------------------
 # Public entrypoint
 # -----------------------------------------------------------------------------
@@ -100,6 +172,8 @@ def process_submission_sheet(
     # Processed column is a fixed positional column (schema-by-convention).
     processed_col = PROCESSED_INDEX
     drive = g.drive
+
+    submitted_music_id_for_snapshot: Optional[str] = None
 
     log.info(
         "Starting submission processing: processed_col=%s submissions_folder_id=%s dest_root_folder_id=%s",
@@ -208,6 +282,8 @@ def process_submission_sheet(
                     name="_Submitted_Music",
                 )
 
+                submitted_music_id_for_snapshot = submitted_music_id
+
                 division_tab = (sub.division or "").strip() or "UnknownDivision"
                 ws = _ensure_division_tab_and_headers(
                     g=g,
@@ -240,6 +316,12 @@ def process_submission_sheet(
 
         except Exception:
             log.exception("Row %s failed to process", row_num)
+
+    # Best-effort: publish a JSON snapshot of the _Submitted_Music spreadsheet for website consumption.
+    if submitted_music_id_for_snapshot:
+        write_submitted_music_snapshot(
+            g=g, submitted_music_id=submitted_music_id_for_snapshot
+        )
 
     log.info("Finished submission processing")
 
