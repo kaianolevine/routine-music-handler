@@ -173,7 +173,7 @@ def process_submission_sheet(
     processed_col = PROCESSED_INDEX
     drive = g.drive
 
-    submitted_music_id_for_snapshot: Optional[str] = None
+    submitted_music_id_for_snapshot: Optional[str] = "none"
 
     log.info(
         "Starting submission processing: processed_col=%s submissions_folder_id=%s dest_root_folder_id=%s",
