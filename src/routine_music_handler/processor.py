@@ -173,8 +173,6 @@ def process_submission_sheet(
     processed_col = PROCESSED_INDEX
     drive = g.drive
 
-    submitted_music_id_for_snapshot: Optional[str] = None
-
     log.info(
         "Starting submission processing: processed_col=%s submissions_folder_id=%s dest_root_folder_id=%s",
         processed_col,
@@ -282,8 +280,6 @@ def process_submission_sheet(
                     name="_Submitted_Music",
                 )
 
-                submitted_music_id_for_snapshot = submitted_music_id
-
                 division_tab = (sub.division or "").strip() or "UnknownDivision"
                 ws = _ensure_division_tab_and_headers(
                     g=g,
@@ -318,10 +314,7 @@ def process_submission_sheet(
             log.exception("Row %s failed to process", row_num)
 
     # Best-effort: publish a JSON snapshot of the _Submitted_Music spreadsheet for website consumption.
-    if submitted_music_id_for_snapshot:
-        write_submitted_music_snapshot(
-            g=g, submitted_music_id=submitted_music_id_for_snapshot
-        )
+    write_submitted_music_snapshot(g=g, submitted_music_id=submission_sheet_id)
 
     log.info("Finished submission processing")
 
