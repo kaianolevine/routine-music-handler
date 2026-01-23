@@ -318,7 +318,31 @@ def test_process_submission_sheet_skips_if_missing_audio_url():
         values=[_header_row(), _submission_row(audio_url="", processed="")],
     )
     submission_ss = FakeSpreadsheet(sheet1=ws, worksheets={"Form Responses": ws})
-    gspread = FakeGspreadClient(spreadsheets={submission_sheet_id: submission_ss})
+
+    # Submitted music spreadsheet (per-division tabs) needed for snapshot publishing.
+    submitted_ws = FakeWorksheet(
+        title="Sheet1",
+        values=[
+            [
+                "Timestamp",
+                "Partnership",
+                "Division",
+                "Routine Name",
+                "Descriptor",
+                "Version",
+            ]
+        ],
+    )
+    submitted_ss = FakeSpreadsheet(
+        sheet1=submitted_ws, worksheets={"Sheet1": submitted_ws}
+    )
+
+    gspread = FakeGspreadClient(
+        spreadsheets={
+            submission_sheet_id: submission_ss,
+            "submitted_music_sheet_id": submitted_ss,
+        }
+    )
 
     drive = FakeDriveFacade()
     sheets = FakeSheetsFacade()
@@ -332,7 +356,9 @@ def test_process_submission_sheet_skips_if_missing_audio_url():
         dest_root_folder_id=None,
     )
 
-    assert drive.calls == []
+    # We still resolve _Submitted_Music up front to publish a snapshot, but we should not
+    # process the submission row or mark it processed.
+    assert [c[0] for c in drive.calls] == ["find_or_create_spreadsheet"]
     assert ws.updated_cells == []
 
 
