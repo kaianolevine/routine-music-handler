@@ -175,6 +175,19 @@ def process_submission_sheet(
 
     submitted_music_id_for_snapshot: Optional[str] = None
 
+    # Best-effort: resolve the _Submitted_Music spreadsheet up front so we can always
+    # publish a snapshot even if there are no new submissions in this run.
+    try:
+        log_root_folder_id = dest_root_folder_id or submissions_folder_id
+        submitted_music_id_for_snapshot = drive.find_or_create_spreadsheet(
+            parent_folder_id=log_root_folder_id,
+            name="_Submitted_Music",
+        )
+    except Exception:
+        log.exception(
+            "Failed to resolve _Submitted_Music spreadsheet for snapshot (best-effort)"
+        )
+
     log.info(
         "Starting submission processing: processed_col=%s submissions_folder_id=%s dest_root_folder_id=%s",
         processed_col,
@@ -276,13 +289,15 @@ def process_submission_sheet(
 
             # Log to _Submitted_Music (best-effort; failures do not block main pipeline).
             try:
-                log_root_folder_id = dest_root_folder_id or submissions_folder_id
-                submitted_music_id = drive.find_or_create_spreadsheet(
-                    parent_folder_id=log_root_folder_id,
-                    name="_Submitted_Music",
-                )
-
-                submitted_music_id_for_snapshot = submitted_music_id
+                # Reuse the resolved _Submitted_Music spreadsheet id when available.
+                submitted_music_id = submitted_music_id_for_snapshot
+                if not submitted_music_id:
+                    log_root_folder_id = dest_root_folder_id or submissions_folder_id
+                    submitted_music_id = drive.find_or_create_spreadsheet(
+                        parent_folder_id=log_root_folder_id,
+                        name="_Submitted_Music",
+                    )
+                    submitted_music_id_for_snapshot = submitted_music_id
 
                 division_tab = (sub.division or "").strip() or "UnknownDivision"
                 ws = _ensure_division_tab_and_headers(
