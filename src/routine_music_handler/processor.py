@@ -173,7 +173,7 @@ def process_submission_sheet(
     processed_col = PROCESSED_INDEX
     drive = g.drive
 
-    submitted_music_id_for_snapshot: Optional[str] = None
+    submitted_music_id_for_snapshot: Optional[str] = "none"
 
     # Best-effort: resolve the _Submitted_Music spreadsheet up front so we can always
     # publish a snapshot even if there are no new submissions in this run.
