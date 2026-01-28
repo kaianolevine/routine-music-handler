@@ -51,15 +51,15 @@ jobs:
 
       - name: 📄 Copy JSON snapshot into website repo
         run: |
-          mkdir -p website/v1/routine-music
-          cp -f v1/routine-music/submitted_music.json website/v1/routine-music/submitted_music.json
+          mkdir -p website/src/v1/routine-music
+          cp -f v1/routine-music/submitted_music.json website/src/v1/routine-music/submitted_music.json
 
       - name: ✅ Commit and push website repo (if changed)
         run: |
           cd website
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add v1/routine-music/submitted_music.json
+          git add src/v1/routine-music/submitted_music.json
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
