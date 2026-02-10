@@ -26,7 +26,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Sequence
 
 from kaiano import logger as logger_mod
@@ -581,8 +581,44 @@ def _sanitize_user_entered_data_from_form(value: str) -> str:
     return v
 
 
-def _parse_routine_season_year(timestamp: str) -> str:
-    """Google Forms timestamp 'M/D/YYYY HH:MM:SS'. If month >= 11, season year is next year."""
-    dt = datetime.strptime(timestamp.strip(), "%m/%d/%Y %H:%M:%S")
+def _parse_routine_season_year(timestamp: Any) -> str:
+    """Return the routine season-year derived from a submission timestamp.
+
+    Supported formats:
+    - Legacy Google Forms: 'M/D/YYYY HH:MM:SS' (e.g., '2/10/2026 16:57:46')
+    - API ISO-8601: 'YYYY-MM-DDTHH:MM:SS.sssZ' (e.g., '2026-02-10T22:57:46.960Z')
+
+    Rule: If month >= 11, season year is next year; otherwise it's the timestamp year.
+    """
+
+    # Normalize to string for parsing.
+    if isinstance(timestamp, datetime):
+        dt = timestamp
+    else:
+        ts = str(timestamp or "").strip()
+        if not ts:
+            raise ValueError("Missing timestamp")
+
+        # 1) Try legacy Google Forms format.
+        try:
+            dt = datetime.strptime(ts, "%m/%d/%Y %H:%M:%S")
+        except Exception:
+            dt = None  # type: ignore[assignment]
+
+        # 2) Try ISO-8601 (including 'Z' suffix).
+        if dt is None:
+            iso = ts
+            if iso.endswith("Z"):
+                # Python's fromisoformat doesn't accept 'Z'; use explicit UTC offset.
+                iso = iso[:-1] + "+00:00"
+            try:
+                dt = datetime.fromisoformat(iso)
+            except Exception as e:
+                raise ValueError(f"Unrecognized timestamp format: {ts}") from e
+
+    # If timezone-aware, convert to UTC for stable month/year semantics.
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+
     year = dt.year + (1 if dt.month >= 11 else 0)
     return str(year)
