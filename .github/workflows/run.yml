@@ -37,7 +37,7 @@ jobs:
           poetry install
           poetry add git+https://github.com/kaianolevine/kaiano-common-utils.git
 
-      - name: 🏃 Run Routine Music Handler (Source A)
+      - name: 🏃 Run Routine Music Handler (New Website-API)
         env:
           ROUTINE_MUSIC_WORKSHEET_NAME: "RoutineSubmissions2026"
           ROUTINE_MUSIC_DEST_ROOT_FOLDER_ID: "1I7NxCM4RLYhXmQ1BaQjsNvKNWgMClgLH"
@@ -45,7 +45,7 @@ jobs:
           ROUTINE_MUSIC_SUBMISSIONS_FOLDER_ID: "1IzWwM-qfXvJsjIL5mtJawROLVWu7Qby7"
         run: poetry run python src/routine_music_handler/main.py
 
-      - name: 🏃 Run Routine Music Handler (Source B)
+      - name: 🏃 Run Routine Music Handler (Legacy Google Form)
         env:
           ROUTINE_MUSIC_WORKSHEET_NAME: "Form Responses 1"
           ROUTINE_MUSIC_DEST_ROOT_FOLDER_ID: "1I7NxCM4RLYhXmQ1BaQjsNvKNWgMClgLH"
